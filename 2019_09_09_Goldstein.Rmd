@@ -1,0 +1,143 @@
+---
+title: "2019_09_09_Goldstein"
+author: 
+- Allam, Nader
+- Dai, David
+- Feng, Yue
+- Richman, Cory
+- Kazmierski, Michal
+date: "09/09/2019"
+output: html_document
+---
+
+# Assignment 1
+1. Assemble into your assigned teams.
+2. Ensure that RStudio is running and you can load all required libraries.
+3. Load the required data
+4. Create an rmarkdown document that contains the following:
+    1. A summary table of the subject numbers per timepoint, genotype, and condition
+    2. Visualization(s) of the difference in hippocampal volume by Genotype at the final timepoint. 3. Visualization(s) of the difference in hippocampal volume by Condition at the final timepoint. 4. Visualization(s) of the change over time by Condition and Genotype.
+
+## Load the required libraries and data.
+```{r, warning=FALSE, message=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(ggridges))
+
+mice <- read_csv("./mice.csv")
+volumes <- read_csv("./volumes.csv")
+
+mice <- mice %>% inner_join(volumes)
+mice <- mice %>%
+    mutate(Timepoint = fct_relevel(Timepoint, "Pre1", "Pre2", "24h",
+                                   "48h", "1 week", "2 week")) # re-order timepoints chronologically rather than alphabetically
+```
+
+## A summary table of the subject numbers per timepoint, genotype, and condition.
+```{r}
+with(mice, ftable(Timepoint, Genotype, Condition))
+```
+
+## Visualization(s) of the difference in hippocampal volume by Genotype at 2 weeks.
+```{r}
+final_timepoint <- mice %>% 
+    filter(Timepoint == "2 week") # Extract data only at final timepoint
+```
+
+### Boxplot
+```{r}
+y_label <- expression("Hippocampal Volume" ~ (mm^3))
+
+final_timepoint %>%
+    ggplot(aes(x = Genotype, y = hippocampus)) + 
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by genotype at 2 weeks") +
+    theme_classic(16)
+```
+
+### Ridge plot
+```{r, message=FALSE}
+final_timepoint %>%
+    ggplot(aes(x = hippocampus, y = Genotype, fill = Genotype)) + 
+    geom_density_ridges() + 
+    xlab(y_label) +
+    ggtitle("Hippocampal volume by genotype at 2 weeks") +
+    theme_classic(16) +
+    theme(legend.position = "none")
+```
+
+### Violin plot
+```{r}
+final_timepoint %>%
+    ggplot(aes(x = Genotype, y = hippocampus, colour = Genotype)) + 
+    geom_violin() + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by genotype at 2 weeks") +
+    theme_classic(16) +
+    theme(legend.position = "none")
+```
+
+## Visualization(s) of the difference in hippocampal volume by Condition at 2 weeks.
+### Boxplot
+```{r}
+
+final_timepoint %>%
+    ggplot(aes(x = Condition, y = hippocampus)) + 
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by Condition at 2 weeks") +
+    theme_classic(16)
+```
+
+### Ridge plot
+```{r, message=FALSE}
+final_timepoint %>%
+    ggplot(aes(x = hippocampus, y = Condition, fill = Condition)) + 
+    geom_density_ridges() + 
+    xlab(y_label) +
+    ggtitle("Hippocampal volume by Condition at 2 weeks") +
+    theme_classic(16) +
+    theme(legend.position = "none",
+          plot.title = element_text(hjust = .7))
+```
+
+### Violin plot
+```{r}
+final_timepoint %>%
+    ggplot(aes(x = Condition, y = hippocampus, colour = Condition)) + 
+    geom_violin() + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by Condition at 2 weeks") +
+    theme_classic(16) +
+    theme(legend.position = "none")
+```
+
+## Visualization(s) of the change over time by Condition and Genotype.
+```{r}
+ggplot(mice) +
+    aes(x=DaysOfEE,
+        y=hippocampus,
+        colour=Genotype) +
+    geom_boxplot(aes(group=interaction(Timepoint, Genotype))) +
+    stat_summary(fun.y = median, geom="line",
+                 position =
+                     position_jitterdodge(jitter.width = .2)) +
+    ylab(y_label) +
+    xlab("Days of enrichment") +
+    ggtitle("Hippocampal volume",
+            subtitle = "Change over time") +
+    facet_grid(Condition ~ .) +
+    theme_classic(16) +
+    theme(strip.text.y = element_text(face="bold", size = 9, angle = 0, hjust = 0), 
+          strip.background = element_rect(fill = NA, colour = NA)) # remove the boxes around facet labels and rotate them
+```
+
+**Note:** There were no data points at 1 day of enrichment for *Exercise* and *Isolated Standard* conditions.

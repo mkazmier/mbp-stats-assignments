@@ -1,0 +1,170 @@
+---
+title: "2019_09_11"
+author:
+- Allam, Nader
+- Dai, David
+- Feng, Yue
+- Richman, Cory
+- Kazmierski, Michal
+date: "11/09/2019"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Assignment 3
+We are moving away from the mice dataset we've worked with so far and towards a hypothetical clinical trial. You are placed in the role of the lead statisticians for the trial. Before the trial starts your role is to come up with an analysis plan.
+Some information about the trial. The plan is to have three groups: placebo, standard of care, and standard of care plus the new therapeutic. The outcome is tumour volume. The plan is for the trial to run for 6 months, with assessments of tumour volume at baseline and at trial completion.
+Past studies have shown that, at entry into the trial, tumour volume is around 45 mm3 with a standard deviation 333
+of 5 mm . Untreated, tumours will grow by 23 mm per year (with a standard deviation of 12 mm ). With standard of care treatment tumours are expected to only grow by 15 mm3 (with a standard deviation of 12 mm3
+).
+For this assignment: (1) describe your proposed analysis plan with sufficient detail that anyone could run your modelcla. Model both tumour volume and a binary output of improved or not improved based on tumour volume
+(with less than 5 mm3 tumour growth as the criteria for improved) (2) Use simulations to determine the number of subjects that would be needed to detect different levels of efficacy of the new treatment against placebo, (2) or against standard of care therapy. Use both continuous volume and the binary label of improved and not improved for 2 and 3.
+
+## Description of proposed analysis plan.
+1. Simulations will be used to determine the sample size required to detect different levels of efficacy of the new treatment against the controls (placebo and current standard of care). Based on previous studies, the baseline tumour volume is assumed to be around 45 mm^3^ with a standard deviation of 5 mm^3^. In the placebo group tumours will grow by 23 mm^3^ per year (with a standard deviation of 12 mm^3^), and with standard of care treatment by 15 mm^3^ (with a standard deviation of 12 mm^3^). The outcome will be simulated as: normally distributed baseline volume + normally distributed change in volume in each group + random normal noise with zero mean and unit variance. Tumour growth is assumed to be linear with respect to time.
+2.	Validation of randomization across groups (using ANOVA to compare mean tumor volumes prior to treatment and visualizing by boxplots): this is to assess whether the randomization is unbiased across all groups prior to treatment, ensuring fair comparison between groups at the final timepoint.
+3.	Use of linear model to test whether the changes in tumour volume (continuous) in each group are significantly different from each other. Reference is taken to be the change in tumor volume as a result of standard of care + new treatment by the end of the 6 months treatment. The regression coefficients will provide information about the effect of the new treatment compared to placebo and standard of care and the statistical significance of the differences.  
+4.	Use of logistic regression model to test whether the new treatment leads to a significant improvement (binary, defined as increase in tumour volume < 5 mm^3^ after 6 months) compared to placebo and current standard of care. The new treatment will be used as reference and the model coefficients will give information about how the new treatment changes the likelihood of improvement compared to the control groups.
+
+
+
+## Use simulations to determine the number of subjects that would be needed to detect different levels of efficacy of the new treatment against placebo, or against standard of care therapy.
+
+### Load the necessary libraries.
+```{r, warning=FALSE, message=FALSE}
+suppressMessages(library(tidyverse))
+library(broom)
+```
+
+### Generate a random dataset.
+```{r}
+simulate_data <- function(baseline_mean=45,
+                          baseline_std=5,
+                          untreated_mean=11.5,
+                          untreated_std=6,
+                          soc_mean=7.5,
+                          soc_std=6,
+                          treatment_mean=0,
+                          treatment_std=6,
+                          noise_std=1,
+                          n_per_group=50) {
+    volume_pre <- rnorm(n_per_group * 3, baseline_mean, baseline_std)
+    change_untreated <- rnorm(n_per_group, untreated_mean, untreated_std)
+    change_soc <- rnorm(n_per_group, soc_mean, soc_std)
+    change_treatment <- rnorm(n_per_group, treatment_mean, treatment_std)
+    group <- c(
+        rep("Placebo", n_per_group),
+        rep("Standard of Care", n_per_group),
+        rep("Treatment", n_per_group)
+    )
+    volume_post <- volume_pre +
+        ifelse(group == "Placebo", change_untreated, 0) +
+        ifelse(group == "Standard of Care", change_soc, 0) +
+        ifelse(group == "Treatment", change_treatment, 0) +
+        rnorm(n_per_group * 3, 0, noise_std)
+    improvement <- ifelse((volume_post - volume_pre) < 5, 1, 0)
+    return(data.frame(group = factor(group, levels = c("Treatment",
+                                                       "Standard of Care",
+                                                       "Placebo")), 
+                      volume_pre,
+                      volume_post,
+                      improvement))
+}
+```
+
+### Example simulated dataset with **large** treatment effect (i.e. small increase in volume).
+```{r}
+simulate_data(treatment_mean = 2) %>%
+    ggplot(aes(x = group, y = volume_post)) +
+        geom_boxplot() +
+        theme_classic(16)
+```
+
+### Example simulated dataset with **small** treatment effect (similar to placebo).
+```{r}
+simulate_data(treatment_mean = 10) %>%
+    ggplot(aes(x = group, y = volume_post)) +
+        geom_boxplot() +
+        theme_classic(16)
+```
+
+```{r}
+get_min_sample_sizes <- function(model,
+                                 treatment_means,
+                                 sample_sizes, 
+                                 group_idx, 
+                                 nsims = 100) {
+    # note: the treatment effect below is the increase in volume after treatment, i.e. smaller is better
+    results <- data.frame(treatment_effect = treatment_means, 
+                          min_sample_size = vector(length = length(treatment_means)))
+
+    for (i in 1:length(treatment_means)) {
+        rejections_per_sample_size <- vector(length = length(sample_sizes))
+        for (j in 1:length(sample_sizes)) {
+            rejections <- 0
+            for (k in 1:nsims) {
+                sim_data <- simulate_data(treatment_mean = treatment_means[i],
+                                          n_per_group = sample_sizes[j])
+                coefs <- model(sim_data)
+                # use alpha = .05
+                rejections <- rejections + (coefs$p.value[group_idx] < .05)
+            }
+            rejections_per_sample_size[j] <- rejections / nsims
+        }
+        # assume we want 80% power
+        results[i, 2] <- sample_sizes[which(rejections_per_sample_size >= .8)[1]]
+    }
+    return(results)
+}
+```
+
+```{r}
+plot_sample_sizes <- function(min_sample_sizes, no_effect_value, title) {
+    # Helper function to create nice looking treatment effect vs sample size plots
+    return(
+        ggplot(min_sample_sizes, aes(x = treatment_effect, y = min_sample_size)) +
+            geom_line() +
+            geom_point() +
+            geom_vline(xintercept = no_effect_value, 
+                       linetype = "dashed",
+                       colour = "grey") +
+            annotate("text", 
+                     x = no_effect_value - .7,
+                     y = max(min_sample_sizes$min_sample_size, na.rm = TRUE) / 2,
+                     label = "No effect",
+                     angle = 90) +
+            xlab(expression("Treatment effect" ~ (mm^3))) +
+            ylab("Minimum sample size for 80% power") +
+            ggtitle(title) +
+            theme_classic(16) +
+            theme(plot.title = element_text(hjust=1)))
+}
+```
+
+### Estimate sample sizes per group for the linear model.
+```{r, warning=FALSE}
+treatment_means_standard <- seq(0, 7.5, by = .5)
+treatment_means_placebo <- seq(0, 11.5, by = .5)
+sample_sizes <- seq(10, 200, by = 5)
+
+model <- function(data) tidy(lm((volume_post - volume_pre) ~ group, data))
+
+results_standard <- get_min_sample_sizes(model, treatment_means_standard, sample_sizes, 2)
+results_placebo <- get_min_sample_sizes(model, treatment_means_placebo, sample_sizes, 3)
+
+plot_sample_sizes(results_standard, 7.5, "Minimum sample size needed for 80% power vs standard")
+plot_sample_sizes(results_placebo, 11.5, "Minimum sample size needed for 80% power vs placebo")
+```
+
+### Estimate sample sizes per group for the logistic model.
+```{r, warning=FALSE} 
+model <- function(data) tidy(glm(improvement ~ group, data, family = binomial(link = "logit")))
+
+results_standard <- get_min_sample_sizes(model, treatment_means_standard, sample_sizes, 2)
+results_placebo <- get_min_sample_sizes(model, treatment_means_placebo, sample_sizes, 3)
+
+plot_sample_sizes(results_standard, 7.5, "Minimum sample size needed for 80% power vs standard")
+plot_sample_sizes(results_placebo, 11.5, "Minimum sample size needed for 80% power vs placebo")
+```

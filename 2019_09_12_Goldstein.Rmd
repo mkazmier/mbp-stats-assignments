@@ -1,0 +1,135 @@
+---
+title: "2019_09_10_Goldstein"
+author:
+- Allam, Nader
+- Dai, David
+- Feng, Yue
+- Richman, Cory
+- Kazmierski, Michal
+date: "10/09/2019"
+output:
+  html_document: default
+---
+
+# Assignment 4
+Take the "real" data, and
+(1) Analyze with the pre-registered plan from yesterday.
+(2) Reanalyze with any updated analyses you want to explore.
+(3) Describe your recommendation regarding whether the new therapeutic is worth adopting and why.
+
+## Load the necessary libraries and data.
+```{r, warning=FALSE, message=FALSE}
+suppressMessages(library(tidyverse))
+library(broom)
+
+volumes <- read_csv("./Goldstein.csv") %>%
+    select(-X1) %>%
+    mutate(group = fct_relevel(group, "SOC+new", "SOC", "placebo"))
+```
+
+## Verify randomization by comparing pre-treatment volumes between groups and ANOVA.
+```{r}
+ggplot(volumes, aes(x = group, y = pre)) +
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(expression("Volume before treatment" ~ (mm^3))) + 
+    theme_classic(16)
+```
+
+```{r}
+summary(aov(pre ~ group, volumes))
+```
+ANOVA test on pre-treatment volume showed no significant difference between groups ($p = .72$), suggesting that the randomization was unbiased with respect to tumour volume (SOC = standard of care).
+
+## Visualization of the distribution of difference in tumour volume after 6 months between groups.
+```{r}
+ggplot(volumes, aes(x = group, y = (post - pre))) +
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(expression("Change in volume" ~ (mm^3))) + 
+    theme_classic(16)
+```
+
+```{r}
+volumes %>% 
+    gather(time, volume, -group) %>%
+    mutate(time = fct_recode(time, "baseline" = "pre", "6 months" = "post")) %>%
+    mutate(time = fct_relevel(time, "baseline", "6 months")) %>%
+    ggplot(aes(x = time, y = volume, colour = group, group = group)) +
+        stat_summary(geom="point", fun.y=mean, size = 2.5) +
+        stat_summary(geom="line", fun.y=mean) +
+        geom_errorbar(stat = "summary",
+                      fun.data = "mean_se",
+                      width = .05) +
+        xlab("Timepoint") +
+        ylab(expression("Volume before treatment" ~ (mm^3))) + 
+        theme_classic(16)
+```
+
+
+## Use of linear model to test whether the changes in tumour volume in each group are significantly different from each other by the end of the 6 month period.
+```{r}
+linear <- lm((post - pre) ~ group, volumes)
+summary(linear)
+```
+```{r}
+confint(linear)
+```
+
+The mean increase in tumour volume after 6 months in the treatment + SOC group was 5.03 mm^3^ (95% CI [1.32, 8.74]). Compared to placebo, the new treatment resulted in a significantly smaller increase in tumour volume (mean 23.97 mm^3^, 95% CI [13.69, 24.18],  $p < 10^{-10}$). Furthermore, the new treatment resulted in a significantly smaller increase in tumour volume compared to standard of care alone (mean 17.29 mm^3^, 95% CI [7.01, 17.50], $p < 10^{-5}$). 
+
+## Use of logistic regression model to test whether the new treatment leads to a significant improvement (defined as increase in tumour volume < 5 mm^3^ after 6 months) compared to placebo and current standard of care.
+```{r}
+logistic <- volumes %>%
+    mutate(improvement = ifelse((post - pre) < 5, 1, 0)) %>%
+    glm(improvement ~ group, ., family = binomial(link = "logit"))
+summary(logistic)
+```
+
+### Calculate the odds ratios from logistic regression coefficients.
+```{r, message=FALSE}
+cis <- 1 / exp(confint(logistic))
+odds_ratios <- tidy(logistic) %>%
+    mutate(odds_ratio = 1 / exp(estimate), 
+           ci_low = cis[, 2],
+           ci_high = cis[, 1]) %>% # use 1 / OR from the model to get the odds of improvement with new treatment
+    select(term, odds_ratio, ci_low, ci_high)
+odds_ratios[-1,]
+```
+The addition of the new treatment to the standard of care resulted in significantly higher likelihood of improvement compared to placebo (odds ratio (OR) = 6.94, 95% CI [2.57, 21.29], $p < .001$) and the standard of care alone (OR = 10.96, 95% CI [3.65, 41.18], $p < 10^{-4}$).
+
+## Conclusions
+The new treatment led to a significantly smaller increase in tumour volume at 6 months when administered in parralel with standard of care, compared to both placebo and standard of care alone. Furthermore, it significantly increased the likelihood of improvement compared to the controls. Given these results, we suggest the new therapeutic is worth adopting in addition to standard of care.
+
+
+## Supplementary
+Higher odds ratio between the placebo group and the treatment group vs the standard of care group (despite the opposite trend in volumes) can be explained by higher variance in the placebo group.
+
+```{r}
+volumes %>% 
+    group_by(group) %>% 
+    summarise(mean = mean(post), sd = sd(post))
+```
+
+```{r}
+volumes %>%
+    mutate(improved = as.factor(ifelse((post - pre) < 5, 1, 0))) %>%
+    ggplot(aes(x = group, y = (post - pre))) +
+        geom_boxplot() +
+        geom_jitter(alpha = .5, 
+                    width = .2, aes(colour = factor(improved, labels = c("not improved", "improved")))) +
+        geom_hline(yintercept = 5, 
+                   linetype = "dashed",
+                   colour = "darkgrey") +
+        ylab(expression("Change in volume" ~ (mm^3))) +
+        theme_classic(16) +
+        labs(colour = "")
+```
+
+## Description of proposed analysis plan.
+1. Simulations will be used to determine the sample size required to detect different levels of efficacy of the new treatment against the controls (placebo and current standard of care). Based on previous studies, the baseline tumour volume is assumed to be around 45 mm^3^ with a standard deviation of 5 mm^3^. In the placebo group tumours will grow by 23 mm^3^ per year (with a standard deviation of 12 mm^3^), and with standard of care treatment by 15 mm^3^ (with a standard deviation of 12 mm^3^). The outcome will be simulated as: normally distributed baseline volume + normally distributed change in volume in each group + random normal noise with zero mean and unit variance. Tumour growth is assumed to be linear with respect to time.
+2.	Validation of randomization across groups (using ANOVA to compare mean tumor volumes prior to treatment and visualizing by boxplots): this is to assess whether the randomization is unbiased across all groups prior to treatment, ensuring fair comparison between groups at the final timepoint.
+3.	Use of linear model to test whether the changes in tumour volume (continuous) in each group are significantly different from each other. Reference is taken to be the change in tumor volume as a result of standard of care + new treatment by the end of the 6 months treatment. The regression coefficients will provide information about the effect of the new treatment compared to placebo and standard of care and the statistical significance of the differences.  
+4.	Use of logistic regression model to test whether the new treatment leads to a significant improvement (binary, defined as increase in tumour volume < 5 mm^3^ after 6 months) compared to placebo and current standard of care. The new treatment will be used as reference and the model coefficients will give information about how the new treatment changes the likelihood of improvement compared to the control groups.

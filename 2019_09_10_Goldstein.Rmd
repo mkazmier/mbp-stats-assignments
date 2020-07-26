@@ -1,0 +1,171 @@
+---
+title: "2019_09_10_Goldstein"
+author:
+- Allam, Nader
+- Dai, David
+- Feng, Yue
+- Richman, Cory
+- Kazmierski, Michal
+date: "10/09/2019"
+output:
+  html_document: default
+---
+
+# Assignment 2
+Start with yesterday's assignment, and add
+1. A statistical test of the difference in hippocampal volume by Genotype at the final timepoint.
+2. A statistical test of the difference in hippocampal volume by Condition at the final timepoint.
+3. A statistical test of the difference in hippocampal volume by Condition and Genotype at the final
+timepoint.
+4. Compute a permutation test of hippocampal volume by Condition and Genotype test, compare p value(s) to what you obtained from the parametric test.
+5. A statistical test of the change over time by Condition and Genotype. Make sure to write a description of how to interpret the estimates of each of the terms.
+6. Integrate your statistics and visualization (adding new ones or removing old ones where need be) to make your document a cohesive report.
+7. Write a summary paragraph interpreting your outcomes.
+
+## Load the required libraries and data.
+```{r, warning=FALSE, message=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(ggridges))
+
+mice <- read_csv("./mice.csv")
+volumes <- read_csv("./volumes.csv")
+
+mice <- mice %>% inner_join(volumes)
+mice <- mice %>%
+    mutate(Timepoint = fct_relevel(Timepoint, "Pre1", "Pre2", "24h",
+                                   "48h", "1 week", "2 week")) # re-order timepoints chronologically rather than alphabetically
+```
+
+## Overview of data
+For the 283 mice in this data set, there are 3 genotypes: CREB+/+, CREB+/-, and CREB-/-. Mice were divided into 4 treatment conditions: Standard, Isolated Standard, Enriched, and Exercise. MRI scans were performed for each mouse at 6 timepoints defined as Pre1, Pre2, 24hr, 48hr, 1 week, and 2 weeks. 
+The following table illustrates the distribution of subject numbers per timepoints, genotypes and conditions. 
+
+```{r}
+with(mice, ftable(Timepoint, Genotype, Condition))
+```
+
+## Visualization(s) of the difference in hippocampal volume by Genotype at 2 weeks.
+```{r}
+final_timepoint <- mice %>% 
+    filter(Timepoint == "2 week") # Extract data only at final timepoint
+```
+
+```{r}
+y_label <- expression("Hippocampal Volume" ~ (mm^3))
+
+final_timepoint %>%
+    ggplot(aes(x = Genotype, y = hippocampus)) + 
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by genotype at 2 weeks") +
+    theme_classic(16)
+```
+
+
+## A statistical test of the difference in hippocampal volume by Genotype at the final timepoint.
+
+```{r}
+summary(lm(hippocampus ~ Genotype, final_timepoint)) # uses CREB -/- as reference by default
+```
+We fitted the hippocampal volume of mice after 2 weeks by genotype into a linear model. Results were compared against the CREB-/- reference. 
+
+Both CREB +/- and CREB -/- had a p-value < 2e-16, implying that there is a statistically significant difference in their hippocampal volumes when compared to CREB -/-.
+
+## Visualization(s) of the difference in hippocampal volume by Condition at 2 weeks.
+```{r}
+
+final_timepoint %>%
+    ggplot(aes(x = Condition, y = hippocampus)) + 
+    geom_boxplot(width = .5) + 
+    geom_jitter(alpha = .2, 
+                width = .2) +
+    ylab(y_label) +
+    ggtitle("Hippocampal volume by Condition at 2 weeks") +
+    theme_classic(16)
+```
+
+## A statistical test of the difference in hippocampal volume by Condition at the final timepoint.
+
+```{r}
+final_timepoint %>%
+    mutate(Condition=fct_relevel(Condition, "Standard", "Isolated Standard", "Exercise", "Enriched")) %>% # use Standard condition as reference
+    lm(hippocampus ~ Condition, .) %>%
+    summary
+```
+At 2 weeks, the hippocampal volumes of the differently conditioned mice were compared against the Standard condition. Only the enriched condition showed statistically significant difference in volume (p=1e-06).
+
+## Visualization(s) of the change over time by Condition and Genotype.
+```{r}
+ggplot(mice) +
+    aes(x=DaysOfEE,
+        y=hippocampus,
+        colour=Genotype) +
+    geom_boxplot(aes(group=interaction(Timepoint, Genotype))) +
+    stat_summary(fun.y = median, geom="line",
+                 position =
+                     position_jitterdodge(jitter.width = .2)) +
+    ylab(y_label) +
+    xlab("Days of enrichment") +
+    ggtitle("Hippocampal volume",
+            subtitle = "Change over time") +
+    facet_grid(Condition ~ .) +
+    theme_classic(16) +
+    theme(strip.text.y = element_text(face="bold", size = 9, angle = 0, hjust = 0), 
+          strip.background = element_rect(fill = NA, colour = NA)) # remove the boxes around facet labels and rotate them
+```
+
+**Note:** There were no data points at 1 day of enrichment for *Exercise* and *Isolated Standard* conditions.
+
+## A statistical test of the difference in hippocampal volume by Condition and Genotype at the final timepoint.
+
+```{r}
+lm_result <- final_timepoint %>%
+    mutate(Condition=fct_relevel(Condition, "Standard", "Isolated Standard", "Exercise", "Enriched")) %>%
+    lm(hippocampus ~ Condition + Genotype, .) %>%
+    summary
+lm_result
+```
+
+## Permutation test of hippocampal volume by Condition and Genotype test, comparing obtained p values to those obtained from the parametric test.
+
+```{r}
+nsims <- 1000
+
+# save permutation t statistics for all variables in one dataframe
+permutations <- data.frame(matrix(ncol = nrow(coef(lm_result)) - 1, nrow = nsims))
+colnames(permutations) <- rownames(coef(lm_result))[-1]
+
+for (i in 1:nsims) {
+    permuted <- final_timepoint %>% mutate(permuted=sample(hippocampus)) 
+    tmp <- summary(lm(permuted ~ Genotype + Condition, permuted))
+    tmp_coef <- coef(tmp)
+    permutations[i, ] <- tmp_coef[-1, "t value"]
+}
+
+pvals_permutation <- rowMeans(abs(t(permutations)) > abs(coef(lm_result)[-1, "t value"]))
+data.frame(parametric = coef(lm_result)[-1, "Pr(>|t|)"],
+           permutation = pvals_permutation)
+
+```
+
+Permutation p-values were consistent with the p-values obtained from the linear model (actual p-value estimates differed very slightly from the linear model obtained based on the permutations of the data set performed over every simulation run; in theory if sufficient runs are performed, p-values obtained should converge to the same value).
+
+## Change over time by Condition and Genotype.
+
+Longitudinal measurements from the same mice are likely to be strongly correlated. To account for that, a mixed-effects model is used (fitting separate intercepts for each mouse).
+```{r}
+suppressMessages(library(lme4))
+
+mice %>%
+    mutate(Condition=fct_relevel(Condition, "Standard", "Isolated Standard", "Exercise", "Enriched")) %>%
+    lmer(hippocampus ~ Condition * DaysOfEE + Genotype * DaysOfEE + (1|ID), .) %>%
+    summary
+```
+
+The time interaction coefficient estimates from the mixed-effects model represent the difference in slope (rate of change) of hippocampal volume over time from the baseline. The relative volume gain was the fastest in the Exercise and Enriched groups and was close to zero (i.e. almost no difference from baseline) in the Isolated Standard group as compared to baseline. Furthermore, heterozygous and wild-type mice showed slower volume gain compared to the homozygous baseline. The effect of these variables on hippocampal size as a function of time is supported by large t values represented amongst genotype (particularly CREB+/+), exercise and enriched conditions.
+
+## Summary
+
+We have demonstrated that hippocampal volume depends on the genotype, condition and time of enrichment in this sample. These variables demonstrate statistically significant effects on hippocampal volume, to varying degrees as indicated in this report.
